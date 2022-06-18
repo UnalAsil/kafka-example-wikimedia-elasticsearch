@@ -1,9 +1,16 @@
 package kafka.example.wikimedia.elasticsearch.consumer;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.core.IndexRequest;
+import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import co.elastic.clients.transport.ElasticsearchTransport;
+import co.elastic.clients.transport.rest_client.RestClientTransport;
+import org.apache.http.HttpHost;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.errors.WakeupException;
+import org.elasticsearch.client.RestClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,8 +25,7 @@ public class ConsumerMain {
 
     public static void main(String[] args) throws IOException {
 
-        //TODO -> Push messages to elastic
-        //TODO -> Make broker abstractions.
+        //TODO -> Make abstractions, create services for consumer and indexing.
 
         //Could be extract to the factory.
         Properties properties = new Properties();
@@ -30,12 +36,23 @@ public class ConsumerMain {
         Thread consumerHook = new Thread(kafkaConsumer::wakeup);
         Runtime.getRuntime().addShutdownHook(consumerHook);
 
+        RestClient restClient = RestClient.builder(
+                new HttpHost("localhost", 9200)).build();
+
+        ElasticsearchTransport transport = new RestClientTransport(
+                restClient, new JacksonJsonpMapper());
+
+        ElasticsearchClient client = new ElasticsearchClient(transport);
+
         try {
             while (true) {
                 ConsumerRecords<String, String> records = kafkaConsumer.poll(Duration.ofMillis(100));
                 LOG.info("Total received message count: {}", records.count());
                 for (ConsumerRecord<String, String> message : records) {
-                    LOG.info("Incoming message : {}", message.value());
+                    IndexRequest<IndexedMessage> indexMessageRequest =
+                            new IndexRequest.Builder<IndexedMessage>().index("messages").id(message.key()).document(new IndexedMessage(message.value())).build();
+                    LOG.info("{} is indexing", indexMessageRequest);
+                    client.index(indexMessageRequest);
                 }
             }
         } catch (WakeupException e) {
